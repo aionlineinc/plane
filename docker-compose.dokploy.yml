@@ -12,26 +12,34 @@ services:
   plane-api:
     image: makeplane/plane-backend:stable
     restart: unless-stopped
+    command: ./bin/docker-entrypoint-api.sh
     ports:
       - "8000"
     environment:
       - DATABASE_URL=postgresql://plane:${DB_PASSWORD}@plane-db:5432/plane
-      - REDIS_URL=redis://plane-redis:6379
+      - REDIS_URL=redis://plane-redis:6379/0
       - SECRET_KEY=${SECRET_KEY}
       - CORS_ALLOWED_ORIGINS=https://${PLANE_DOMAIN}
       - WEB_URL=https://${PLANE_DOMAIN}
       - AWS_S3_ENDPOINT_URL=http://plane-minio:9000
       - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
       - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
-      - AWS_S3_BUCKET_NAME=plane-uploads
+      - AWS_S3_BUCKET_NAME=${AWS_S3_BUCKET_NAME:-uploads}
       - AWS_REGION=us-east-1
       - USE_MINIO=1
+      - RABBITMQ_HOST=plane-mq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-plane}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST:-plane}
     volumes:
-      - ../files/plane-logs:/code/plane/logs
+      - plane-logs:/code/plane/logs
     depends_on:
       plane-db:
         condition: service_healthy
       plane-redis:
+        condition: service_healthy
+      plane-mq:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/ || exit 1"]
@@ -42,17 +50,45 @@ services:
   plane-worker:
     image: makeplane/plane-backend:stable
     restart: unless-stopped
-    command: ["celery", "-A", "plane", "worker", "-l", "info"]
+    command: ./bin/docker-entrypoint-worker.sh
     environment:
       - DATABASE_URL=postgresql://plane:${DB_PASSWORD}@plane-db:5432/plane
-      - REDIS_URL=redis://plane-redis:6379
+      - REDIS_URL=redis://plane-redis:6379/0
       - SECRET_KEY=${SECRET_KEY}
       - AWS_S3_ENDPOINT_URL=http://plane-minio:9000
       - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
       - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
-      - AWS_S3_BUCKET_NAME=plane-uploads
+      - AWS_S3_BUCKET_NAME=${AWS_S3_BUCKET_NAME:-uploads}
       - AWS_REGION=us-east-1
       - USE_MINIO=1
+      - RABBITMQ_HOST=plane-mq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-plane}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST:-plane}
+    volumes:
+      - plane-logs-worker:/code/plane/logs
+    depends_on:
+      plane-db:
+        condition: service_healthy
+      plane-redis:
+        condition: service_healthy
+      plane-mq:
+        condition: service_healthy
+
+  plane-migrator:
+    image: makeplane/plane-backend:stable
+    restart: "no"
+    command: ./bin/docker-entrypoint-migrator.sh
+    environment:
+      - DATABASE_URL=postgresql://plane:${DB_PASSWORD}@plane-db:5432/plane
+      - REDIS_URL=redis://plane-redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+      - RABBITMQ_HOST=plane-mq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-plane}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST:-plane}
     depends_on:
       plane-db:
         condition: service_healthy
@@ -62,15 +98,24 @@ services:
   plane-beat:
     image: makeplane/plane-backend:stable
     restart: unless-stopped
-    command: ["celery", "-A", "plane", "beat", "-l", "info"]
+    command: ./bin/docker-entrypoint-beat.sh
     environment:
       - DATABASE_URL=postgresql://plane:${DB_PASSWORD}@plane-db:5432/plane
-      - REDIS_URL=redis://plane-redis:6379
+      - REDIS_URL=redis://plane-redis:6379/0
       - SECRET_KEY=${SECRET_KEY}
+      - RABBITMQ_HOST=plane-mq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-plane}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST:-plane}
+    volumes:
+      - plane-logs-beat:/code/plane/logs
     depends_on:
       plane-db:
         condition: service_healthy
       plane-redis:
+        condition: service_healthy
+      plane-mq:
         condition: service_healthy
 
   plane-db:
@@ -81,7 +126,7 @@ services:
       - POSTGRES_USER=plane
       - POSTGRES_PASSWORD=${DB_PASSWORD}
     volumes:
-      - ../files/plane-db-data:/var/lib/postgresql/data
+      - plane-db-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U plane"]
       interval: 10s
@@ -91,8 +136,25 @@ services:
   plane-redis:
     image: redis:7-alpine
     restart: unless-stopped
+    volumes:
+      - plane-redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  plane-mq:
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-plane}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
+      - RABBITMQ_DEFAULT_VHOST=${RABBITMQ_VHOST:-plane}
+    volumes:
+      - plane-mq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -105,4 +167,13 @@ services:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
     volumes:
-      - ../files/plane-minio-data:/data
+      - plane-minio-data:/data
+
+volumes:
+  plane-db-data:
+  plane-redis-data:
+  plane-mq-data:
+  plane-minio-data:
+  plane-logs:
+  plane-logs-worker:
+  plane-logs-beat:
