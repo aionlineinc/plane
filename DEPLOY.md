@@ -61,6 +61,18 @@ All traffic for your domain goes to plane-proxy; Nginx then routes `/api` and `/
 
 Config for the proxy is in **`proxy/nginx.conf`** (mounted into the plane-proxy container).
 
+**Still getting 405?**
+
+1. **Confirm where the domain points**  
+   In Dokploy → your app → **Domains**: the domain (e.g. `pm.aient.co`) must be attached to **plane-proxy** with port **80**. If it’s attached to **plane-web** (or anything else), move it to **plane-proxy** and redeploy.
+
+2. **See who answered the request**  
+   Open DevTools → **Network** tab, trigger the failing request (e.g. login), click that request and check **Response Headers**:
+   - **`X-Served-By: plane-proxy-api`** → the request reached the proxy and was sent to the API. A 405 here means the API returned it (e.g. wrong method or URL).
+   - **`X-Served-By: plane-proxy-web`** or **no X-Served-By** → the request hit the frontend (or didn’t go through the proxy). Then the domain is still pointing at the wrong service: fix the Domains tab so the domain uses **plane-proxy**.
+
+3. **React error #418** in the console is a **hydration** issue (server/client HTML mismatch), not the 405. It doesn’t change API routing. You can fix it separately (e.g. avoid different server/client content, or `suppressHydrationWarning` where needed).
+
 ### Using another proxy (Nginx, Caddy, etc.)
 
 Route by path:
