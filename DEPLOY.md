@@ -13,7 +13,13 @@ Set these in Dokploy **Environment** (or in a `.env` file next to the compose):
 | `SECRET_KEY` | Django secret key (long random string). |
 | `MINIO_ROOT_USER` | MinIO admin user. |
 | `MINIO_ROOT_PASSWORD` | MinIO admin password. |
-| `RABBITMQ_PASSWORD` | RabbitMQ password for user `plane`. |
+| `RABBITMQ_PASSWORD` | RabbitMQ password for user `plane`. (Spelling: **RABBITMQ**, not RABBITMO.) |
+
+Optional:
+
+| Variable | Description |
+|----------|-------------|
+| `GUNICORN_WORKERS` | API worker processes (default `2`). If you set it in env, use a number (e.g. `1` or `2`); an empty value will crash the API. |
 
 Optional (have defaults in compose):
 
