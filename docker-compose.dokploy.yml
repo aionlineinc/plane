@@ -47,6 +47,8 @@ services:
     command: ./bin/docker-entrypoint-api.sh
     env_file:
       - .env
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://plane-redis:6379/0}
     depends_on:
       - plane-db
       - plane-redis
@@ -63,6 +65,8 @@ services:
     command: ./bin/docker-entrypoint-worker.sh
     env_file:
       - .env
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://plane-redis:6379/0}
     depends_on:
       - api
       - plane-db
@@ -80,6 +84,8 @@ services:
     command: ./bin/docker-entrypoint-beat.sh
     env_file:
       - .env
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://plane-redis:6379/0}
     depends_on:
       - api
       - plane-db
@@ -97,6 +103,8 @@ services:
     command: ./bin/docker-entrypoint-migrator.sh
     env_file:
       - .env
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://plane-redis:6379/0}
     depends_on:
       - plane-db
       - plane-redis
