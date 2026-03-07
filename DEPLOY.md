@@ -46,6 +46,21 @@ Ensure:
 
 If your Traefik uses another **entrypoint** (e.g. `web` instead of `websecure`) or no TLS, change the `entrypoints` / `tls` labels on `plane-web` and `plane-api` accordingly.
 
+### Domains tab (Dokploy) – use the proxy
+
+A **plane-proxy** (Nginx) service is the single entry point: it forwards **`/api`** and **`/auth`** to the backend and everything else to the frontend. This avoids 405s regardless of how Dokploy/Traefik handles labels.
+
+**Set the Domains tab like this:**
+
+1. Add your domain (e.g. **`pm.aient.co`**).
+2. Attach it to the **plane-proxy** service (not plane-web or plane-api).
+3. Set **container port** to **80**.
+4. Enable **HTTPS** / Let’s Encrypt if your setup offers it.
+
+All traffic for your domain goes to plane-proxy; Nginx then routes `/api` and `/auth` to the API and the rest to the web app. No need to rely on Traefik path-based routing or leave the Domains tab empty.
+
+Config for the proxy is in **`proxy/nginx.conf`** (mounted into the plane-proxy container).
+
 ### Using another proxy (Nginx, Caddy, etc.)
 
 Route by path:
@@ -73,6 +88,9 @@ All persistent data is in **named volumes** (`plane-db-data`, `plane-redis-data`
 
 ## Changes made in this compose
 
+(All in **`docker-compose.dokploy.yml`** and **`proxy/nginx.conf`**.)
+
+- **plane-proxy** (Nginx): single entry point so the Domains tab can point to one service; routes `/api` and `/auth` to the API, everything else to the web app (fixes 405 when Dokploy/Traefik don’t do path-based routing).
 - **RabbitMQ** added: backend and Celery require it (worker/beat).
 - **REDIS_URL** set to `redis://plane-redis:6379/0`.
 - **Named volumes** instead of host paths so it works in Dokploy.
