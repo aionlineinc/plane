@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   plane-web:
     image: makeplane/plane-frontend:stable
