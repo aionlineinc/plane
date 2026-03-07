@@ -27,19 +27,33 @@ Optional (have defaults in compose):
 - `RABBITMQ_VHOST` (default `plane`)
 - `AWS_S3_BUCKET_NAME` (default `uploads`)
 
-## Routing (reverse proxy)
+## Routing (reverse proxy) – important
 
-The compose does **not** include Plane’s proxy. You need a reverse proxy (e.g. Traefik via Dokploy) in front:
+The frontend calls the **same origin** (e.g. `https://pm.aient.co`) for API requests. So the backend must be reachable at the same host under paths like **`/api`** and **`/auth`**. If everything is sent to the web container, you get **405 Method Not Allowed** on `POST /auth/email-check/` and similar, because the web app only serves pages and does not implement those endpoints.
 
-- **Option A – Single domain**  
-  Point your domain at **one** service (e.g. `plane-web` on port 3000). Then either:
-  - Route `/api` (and any other backend paths) to `plane-api:8000`, and set `NEXT_PUBLIC_API_BASE_URL=https://${PLANE_DOMAIN}` (so the frontend calls the same host; your proxy must forward `/api` to the backend), or
-  - Use Plane’s **proxy** image in front of web + api (see [Plane self-hosting](https://developers.plane.so/self-hosting/overview)) and point your domain at the proxy.
+### Using Traefik (e.g. Dokploy)
 
-- **Option B – Separate host/port for API**  
-  Expose `plane-api` and set `NEXT_PUBLIC_API_BASE_URL` to that URL (e.g. `https://api.yourdomain.com`). Ensure CORS allows your web origin.
+This compose adds **Traefik labels** so that, when the stack is on the same network as Traefik (`dokploy-network`):
 
-In Dokploy **Domains**, attach your host to the service that will receive traffic (e.g. `plane-web` container port **3000** if you only route to the frontend and your proxy handles `/api` elsewhere).
+- **`https://${PLANE_DOMAIN}/api`** and **`https://${PLANE_DOMAIN}/auth`** → **plane-api:8000**
+- **`https://${PLANE_DOMAIN}/`** (everything else) → **plane-web:3000**
+
+Ensure:
+
+1. **`PLANE_DOMAIN`** is set in the environment (e.g. `pm.aient.co`).
+2. The **`dokploy-network`** exists and Traefik is attached to it. If your Traefik network has another name, change the `networks` section and the `plane-web` / `plane-api` `networks` in the compose to use that name. Create the network if needed: `docker network create dokploy-network`.
+3. **Do not** attach the domain to a single service in Dokploy’s Domains tab if that would send all traffic to one container; the labels above define the correct routing. If Dokploy still attaches the domain to one service, remove that and rely on the labels, or configure path-based routing in your proxy to match the behaviour above.
+
+If your Traefik uses another **entrypoint** (e.g. `web` instead of `websecure`) or no TLS, change the `entrypoints` / `tls` labels on `plane-web` and `plane-api` accordingly.
+
+### Using another proxy (Nginx, Caddy, etc.)
+
+Route by path:
+
+- **`/api`** and **`/auth`** → proxy to **plane-api:8000**
+- **`/`** (default) → proxy to **plane-web:3000**
+
+Then point your domain at that proxy.
 
 ## First run: migrations
 

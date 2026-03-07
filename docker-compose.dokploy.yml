@@ -8,6 +8,17 @@ services:
       - NEXT_PUBLIC_API_BASE_URL=https://${PLANE_DOMAIN}
     depends_on:
       - plane-api
+    networks:
+      - default
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      # Catch-all: serve frontend for this host (lower priority so /api and /auth hit API first)
+      - "traefik.http.routers.plane-web.rule=Host(`${PLANE_DOMAIN}`)"
+      - "traefik.http.routers.plane-web.priority=1"
+      - "traefik.http.routers.plane-web.entrypoints=websecure"
+      - "traefik.http.routers.plane-web.tls.certresolver=letsencrypt"
+      - "traefik.http.services.plane-web.loadbalancer.server.port=3000"
 
   plane-api:
     image: makeplane/plane-backend:stable
@@ -15,6 +26,17 @@ services:
     command: ./bin/docker-entrypoint-api.sh
     ports:
       - "8000"
+    networks:
+      - default
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      # /api and /auth must hit the backend (higher priority than web)
+      - "traefik.http.routers.plane-api.rule=Host(`${PLANE_DOMAIN}`) && (PathPrefix(`/api`) || PathPrefix(`/auth`))"
+      - "traefik.http.routers.plane-api.priority=10"
+      - "traefik.http.routers.plane-api.entrypoints=websecure"
+      - "traefik.http.routers.plane-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.plane-api.loadbalancer.server.port=8000"
     environment:
       - GUNICORN_WORKERS=${GUNICORN_WORKERS:-2}
       - DATABASE_URL=postgresql://plane:${DB_PASSWORD}@plane-db:5432/plane
@@ -169,6 +191,10 @@ services:
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
     volumes:
       - plane-minio-data:/data
+
+networks:
+  dokploy-network:
+    external: true
 
 volumes:
   plane-db-data:
