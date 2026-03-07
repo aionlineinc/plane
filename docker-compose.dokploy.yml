@@ -1,204 +1,110 @@
+version: "3.8"
+
 services:
-  web:
-    build:
-      context: .
-      dockerfile: ./apps/web/Dockerfile.web
-      args:
-        DOCKER_BUILDKIT: 1
-    restart: always
-    depends_on:
-      - api
-    networks:
-      - dokploy-network
-
-  admin:
-    build:
-      context: .
-      dockerfile: ./apps/admin/Dockerfile.admin
-      args:
-        DOCKER_BUILDKIT: 1
-    restart: always
-    depends_on:
-      - api
-      - web
-    networks:
-      - dokploy-network
-
-  space:
-    build:
-      context: .
-      dockerfile: ./apps/space/Dockerfile.space
-      args:
-        DOCKER_BUILDKIT: 1
-    restart: always
-    depends_on:
-      - api
-      - web
-    networks:
-      - dokploy-network
-
-  api:
-    build:
-      context: ./apps/api
-      dockerfile: Dockerfile.api
-      args:
-        DOCKER_BUILDKIT: 1
-    restart: always
-    command: ./bin/docker-entrypoint-api.sh
-    env_file:
-      - .env
+  plane-web:
+    image: makeplane/plane-frontend:stable
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
     environment:
-      REDIS_URL: ${REDIS_URL:-redis://plane-redis:6379/0}
+      - NEXT_PUBLIC_API_BASE_URL=https://${PLANE_DOMAIN}
     depends_on:
-      - plane-db
-      - plane-redis
-    networks:
-      - dokploy-network
+      - plane-api
 
-  worker:
-    build:
-      context: ./apps/api
-      dockerfile: Dockerfile.api
-      args:
-        DOCKER_BUILDKIT: 1
-    restart: always
-    command: ./bin/docker-entrypoint-worker.sh
-    env_file:
-      - .env
+  plane-api:
+    image: makeplane/plane-backend:stable
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
     environment:
-      REDIS_URL: ${REDIS_URL:-redis://plane-redis:6379/0}
+      - DATABASE_URL=postgresql://plane:${DB_PASSWORD}@plane-db:5432/plane
+      - REDIS_URL=redis://plane-redis:6379
+      - SECRET_KEY=${SECRET_KEY}
+      - CORS_ALLOWED_ORIGINS=https://${PLANE_DOMAIN}
+      - WEB_URL=https://${PLANE_DOMAIN}
+      - AWS_S3_ENDPOINT_URL=http://plane-minio:9000
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      - AWS_S3_BUCKET_NAME=plane-uploads
+      - AWS_REGION=us-east-1
+      - USE_MINIO=1
+    volumes:
+      - ../files/plane-logs:/code/plane/logs
     depends_on:
-      - api
-      - plane-db
-      - plane-redis
-    networks:
-      - dokploy-network
+      plane-db:
+        condition: service_healthy
+      plane-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
-  beat-worker:
-    build:
-      context: ./apps/api
-      dockerfile: Dockerfile.api
-      args:
-        DOCKER_BUILDKIT: 1
-    restart: always
-    command: ./bin/docker-entrypoint-beat.sh
-    env_file:
-      - .env
+  plane-worker:
+    image: makeplane/plane-backend:stable
+    restart: unless-stopped
+    command: ["celery", "-A", "plane", "worker", "-l", "info"]
     environment:
-      REDIS_URL: ${REDIS_URL:-redis://plane-redis:6379/0}
+      - DATABASE_URL=postgresql://plane:${DB_PASSWORD}@plane-db:5432/plane
+      - REDIS_URL=redis://plane-redis:6379
+      - SECRET_KEY=${SECRET_KEY}
+      - AWS_S3_ENDPOINT_URL=http://plane-minio:9000
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      - AWS_S3_BUCKET_NAME=plane-uploads
+      - AWS_REGION=us-east-1
+      - USE_MINIO=1
     depends_on:
-      - api
-      - plane-db
-      - plane-redis
-    networks:
-      - dokploy-network
+      plane-db:
+        condition: service_healthy
+      plane-redis:
+        condition: service_healthy
 
-  migrator:
-    build:
-      context: ./apps/api
-      dockerfile: Dockerfile.api
-      args:
-        DOCKER_BUILDKIT: 1
-    restart: "no"
-    command: ./bin/docker-entrypoint-migrator.sh
-    env_file:
-      - .env
+  plane-beat:
+    image: makeplane/plane-backend:stable
+    restart: unless-stopped
+    command: ["celery", "-A", "plane", "beat", "-l", "info"]
     environment:
-      REDIS_URL: ${REDIS_URL:-redis://plane-redis:6379/0}
+      - DATABASE_URL=postgresql://plane:${DB_PASSWORD}@plane-db:5432/plane
+      - REDIS_URL=redis://plane-redis:6379
+      - SECRET_KEY=${SECRET_KEY}
     depends_on:
-      - plane-db
-      - plane-redis
-    networks:
-      - dokploy-network
-
-  live:
-    build:
-      context: .
-      dockerfile: ./apps/live/Dockerfile.live
-      args:
-        DOCKER_BUILDKIT: 1
-    restart: always
-    networks:
-      - dokploy-network
+      plane-db:
+        condition: service_healthy
+      plane-redis:
+        condition: service_healthy
 
   plane-db:
-    image: postgres:15.7-alpine
-    restart: always
-    command: postgres -c 'max_connections=1000'
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    env_file:
-      - .env
+    image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      PGDATA: /var/lib/postgresql/data
-    networks:
-      - dokploy-network
+      - POSTGRES_DB=plane
+      - POSTGRES_USER=plane
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - ../files/plane-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plane"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   plane-redis:
-    image: valkey/valkey:7.2.11-alpine
-    restart: always
-    volumes:
-      - redisdata:/data
-    networks:
-      - dokploy-network
-
-  plane-mq:
-    image: rabbitmq:3.13.6-management-alpine
-    restart: always
-    env_file:
-      - .env
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
-      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST}
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-    networks:
-      - dokploy-network
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   plane-minio:
-    image: minio/minio
-    restart: always
-    command: server /export --console-address ":9090"
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
     volumes:
-      - uploads:/export
-    environment:
-      MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID}
-      MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY}
-    networks:
-      - dokploy-network
-
-  proxy:
-    build:
-      context: ./apps/proxy
-      dockerfile: Dockerfile.ce
-    restart: always
-    environment:
-      FILE_SIZE_LIMIT: ${FILE_SIZE_LIMIT:-5242880}
-      BUCKET_NAME: ${AWS_S3_BUCKET_NAME:-uploads}
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.plane.rule=Host(\`${PLANE_DOMAIN:-plane.local}\`)"
-      - "traefik.http.routers.plane.entrypoints=websecure"
-      - "traefik.http.routers.plane.tls.certresolver=letsencrypt"
-      - "traefik.http.services.plane.loadbalancer.server.port=80"
-    depends_on:
-      - web
-      - api
-      - space
-      - admin
-    networks:
-      - dokploy-network
-
-volumes:
-  pgdata:
-  redisdata:
-  uploads:
-  rabbitmq_data:
-
-networks:
-  dokploy-network:
-    external: true
+      - ../files/plane-minio-data:/data
