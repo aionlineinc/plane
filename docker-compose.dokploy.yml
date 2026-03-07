@@ -5,7 +5,7 @@ services:
     image: makeplane/plane-frontend:stable
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3000"
     environment:
       - NEXT_PUBLIC_API_BASE_URL=https://${PLANE_DOMAIN}
     depends_on:
