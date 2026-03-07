@@ -37,10 +37,7 @@ services:
       - "traefik.http.services.plane-web.loadbalancer.server.port=3000"
 
   plane-api:
-    build:
-      context: ./apps/api
-      dockerfile: Dockerfile.api
-    image: plane-backend:local
+    image: makeplane/plane-backend:stable
     restart: unless-stopped
     command: ./bin/docker-entrypoint-api.sh
     ports:
@@ -90,7 +87,7 @@ services:
       retries: 5
 
   plane-worker:
-    image: plane-backend:local
+    image: makeplane/plane-backend:stable
     restart: unless-stopped
     command: ./bin/docker-entrypoint-worker.sh
     environment:
@@ -119,7 +116,7 @@ services:
         condition: service_healthy
 
   plane-migrator:
-    image: plane-backend:local
+    image: makeplane/plane-backend:stable
     restart: "no"
     command: ./bin/docker-entrypoint-migrator.sh
     environment:
@@ -138,7 +135,7 @@ services:
         condition: service_healthy
 
   plane-beat:
-    image: plane-backend:local
+    image: makeplane/plane-backend:stable
     restart: unless-stopped
     command: ./bin/docker-entrypoint-beat.sh
     environment:

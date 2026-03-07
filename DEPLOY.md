@@ -126,6 +126,30 @@ That usually means the request is **not** going through plane-proxy to the API; 
 
 ---
 
+### 502 Bad Gateway
+
+The proxy (or Traefik) is reaching your app but the upstream (plane-proxy, or plane-api/plane-web behind it) is not responding. Common causes:
+
+**1. plane-api is down or crashing**  
+Most likely after switching to **building the API from source**: the build may have failed, or the API container may be exiting (e.g. missing deps, import error).
+
+- In Dokploy, open **Logs** for **plane-api**. If you see Python tracebacks, build errors, or the container restarting, the custom image is failing.
+- **Quick rollback:** In `docker-compose.dokploy.yml`, change **plane-api** back to the pre-built image and drop the build:
+  - Remove the `build:` block and set `image: makeplane/plane-backend:stable` again.
+  - Set **plane-worker**, **plane-beat**, and **plane-migrator** back to `image: makeplane/plane-backend:stable`.
+  - Redeploy. You’ll get the site back but may see **403** on login again (CSRF) until you fix the build or use a different approach.
+
+**2. plane-web is down**  
+Check **plane-web** logs. If it’s crashing, the frontend won’t load and the proxy returns 502 for `/`.
+
+**3. plane-proxy is down or wrong port**  
+Confirm the domain in the Domains tab points to **plane-proxy**, port **80**. If it points to another service or wrong port, you can get 502.
+
+**4. Containers still starting**  
+After deploy, wait 1–2 minutes for plane-api (and plane-web) to finish migrations and listen on 8000/3000. Retry the page.
+
+---
+
 ### 400 "Instance not configured. Please contact your administrator."
 
 The API is reachable (routing is correct) but the **instance** is not marked as “setup done”, so auth endpoints return 400.
@@ -317,7 +341,7 @@ All persistent data is in **named volumes** (`plane-db-data`, `plane-redis-data`
 (All in **`docker-compose.dokploy.yml`** and **`proxy/nginx.conf`**.)
 
 - **plane-proxy** (Nginx): single entry point so the Domains tab can point to one service; routes `/api` and `/auth` to the API, everything else to the web app (fixes 405 when Dokploy/Traefik don’t do path-based routing).
-- **API built from source** with **CSRF exempt** for `/auth/email-check/` and `/auth/spaces/email-check/` (fixes 403 when the frontend doesn’t send the CSRF token). See `apps/api/plane/authentication/urls.py`. All backend services (api, worker, beat, migrator) use the image `plane-backend:local` built from `apps/api`.
+- **CSRF exempt** for `/auth/email-check/` and `/auth/spaces/email-check/` is applied in **code** (`apps/api/plane/authentication/urls.py`) for when you **build the API from source**. The compose currently uses the **pre-built** image `makeplane/plane-backend:stable` to avoid 502 (build-from-source can fail in some environments). To get login without 403, you’d need to build the API from this repo and use that image for api/worker/beat/migrator.
 - **RabbitMQ** added: backend and Celery require it (worker/beat).
 - **REDIS_URL** set to `redis://plane-redis:6379/0`.
 - **Named volumes** instead of host paths so it works in Dokploy.
