@@ -13,7 +13,7 @@ services:
     image: makeplane/plane-backend:stable
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8000"
     environment:
       - DATABASE_URL=postgresql://plane:${DB_PASSWORD}@plane-db:5432/plane
       - REDIS_URL=redis://plane-redis:6379
