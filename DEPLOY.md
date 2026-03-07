@@ -59,19 +59,116 @@ A **plane-proxy** (Nginx) service is the single entry point: it forwards **`/api
 
 All traffic for your domain goes to plane-proxy; Nginx then routes `/api` and `/auth` to the API and the rest to the web app. No need to rely on Traefik path-based routing or leave the Domains tab empty.
 
+---
+
+### How to attach the domain only to plane-proxy (step-by-step)
+
+Dokploy’s UI varies by version; the idea is always: **domain → one service + port**.
+
+1. **Open the app**
+   - In Dokploy, open the project that runs this Plane stack.
+   - Open the app that uses `docker-compose.dokploy.yml` (e.g. “Plane” or “barbadosorg-plane-firple”).
+
+2. **Open Domains**
+   - Find the **Domains** (or **Domain**, **Routing**, **Ingress**) tab/section for this app and open it.
+
+3. **Remove the domain from other services (if it’s there)**
+   - If **pm.aient.co** is already listed and tied to **plane-web** or **plane-api** (or any service other than plane-proxy), **remove** that domain entry or change it so the domain is no longer attached to that service.
+   - Some UIs show “Domain X → Service Y, port Z”. Ensure no row says pm.aient.co → plane-web or plane-api.
+
+4. **Add / assign the domain to plane-proxy**
+   - **Add domain** (or **Add Domain** / **Configure domain**):
+     - **Domain / host:** `pm.aient.co` (no `https://` or path).
+     - **Service / container:** choose **plane-proxy** (the nginx service in this compose). The list may show the service name from the compose, e.g. **plane-proxy** or a generated name containing “proxy”.
+     - **Port / container port:** **80**.
+   - If the UI has a **single** “Domain” field and a **separate** “Service” dropdown, set Domain = `pm.aient.co`, Service = **plane-proxy**, Port = **80**.
+   - Save (e.g. **Save**, **Update**, **Deploy**).
+
+5. **Redeploy if needed**
+   - If Dokploy asks to redeploy or “Apply” after changing domains, do it so the reverse proxy (e.g. Traefik) picks up the new route.
+
+6. **Check the result**
+   - After a minute, open `https://pm.aient.co`. The site should load.
+   - Try the login flow; in DevTools → Network, the **POST** to `/auth/email-check/` should return **200** and have **X-Served-By: plane-proxy-api** in response headers.
+
+**If you don’t see “plane-proxy” in the service list:**  
+The names might be prefixed (e.g. `barbadosorg-plane-firple-plane-proxy-1`). Pick the one that corresponds to the **proxy** container (the nginx one that runs `proxy/nginx.conf`), not web or api.
+
 Config for the proxy is in **`proxy/nginx.conf`** (mounted into the plane-proxy container).
 
-**Still getting 405?**
+**Still getting 405 on POST /auth/email-check/?**
 
-1. **Confirm where the domain points**  
-   In Dokploy → your app → **Domains**: the domain (e.g. `pm.aient.co`) must be attached to **plane-proxy** with port **80**. If it’s attached to **plane-web** (or anything else), move it to **plane-proxy** and redeploy.
+That usually means the request is **not** going through plane-proxy to the API; it’s hitting the **frontend** (plane-web), which doesn’t handle that route and returns 405.
 
-2. **See who answered the request**  
-   Open DevTools → **Network** tab, trigger the failing request (e.g. login), click that request and check **Response Headers**:
-   - **`X-Served-By: plane-proxy-api`** → the request reached the proxy and was sent to the API. A 405 here means the API returned it (e.g. wrong method or URL).
-   - **`X-Served-By: plane-proxy-web`** or **no X-Served-By** → the request hit the frontend (or didn’t go through the proxy). Then the domain is still pointing at the wrong service: fix the Domains tab so the domain uses **plane-proxy**.
+1. **Check who answered**  
+   In the browser: **DevTools → Network** → click the failed **POST** request to `/auth/email-check/` → **Headers** tab → **Response Headers**:
+   - **`X-Served-By: plane-proxy-api`** → request reached the API. If you still see 405, the API is returning it (rare for this endpoint).
+   - **`X-Served-By: plane-proxy-web`** or **no X-Served-By** → request hit the frontend. So the domain is **not** going to plane-proxy. Fix step 2.
 
-3. **React error #418** in the console is a **hydration** issue (server/client HTML mismatch), not the 405. It doesn’t change API routing. You can fix it separately (e.g. avoid different server/client content, or `suppressHydrationWarning` where needed).
+2. **Point the domain only at plane-proxy**  
+   In Dokploy → your Plane app → **Domains**:
+   - **Remove** the domain from any other service (e.g. plane-web). If the domain is attached to plane-web, all traffic (including `/auth/`) goes to the frontend and you get 405.
+   - **Add** the domain (e.g. `pm.aient.co`) and attach it **only** to **plane-proxy**, container port **80**. Save and redeploy if needed.
+   - Some UIs let you pick “which service” gets the domain; choose **plane-proxy**. If the domain can only be attached to one service, that one must be plane-proxy.
+
+3. **Verify from the command line**  
+   From your machine run:
+   ```bash
+   curl -s -o /dev/null -w "%{http_code}" -X POST https://pm.aient.co/auth/email-check/
+   ```
+   Then:
+   ```bash
+   curl -I -X POST https://pm.aient.co/auth/email-check/
+   ```
+   Check the response headers for **X-Served-By**. If you see **X-Served-By: plane-proxy-api** and 200/400 (not 405), the proxy and API are correct.
+
+4. **React error #418** in the console is a **hydration** issue, not the 405. Fix routing first.
+
+---
+
+### 400 "Instance not configured. Please contact your administrator."
+
+The API is reachable (routing is correct) but the **instance** is not marked as “setup done”, so auth endpoints return 400.
+
+**Fix:** From inside the **API container** (Dokploy → open terminal for **plane-api** → `cd /code`), run:
+
+```bash
+python manage.py shell -c "
+from plane.license.models import Instance
+i = Instance.objects.first()
+if i:
+    i.is_setup_done = True
+    i.save()
+    print('Instance marked as setup done.')
+else:
+    print('No Instance found.')
+"
+```
+
+Then try logging in again. You must have created the first admin (createsuperuser + create_instance_admin) before or after this.
+
+---
+
+### 403 Forbidden on POST /auth/email-check/
+
+The API is reached (routing is correct) but Django’s **CSRF** check fails: the login form POSTs without sending the CSRF token, so Django returns 403.
+
+**1. Check CORS / CSRF trusted origin**
+
+In the **plane-api** service, ensure the env has:
+
+- `CORS_ALLOWED_ORIGINS=https://pm.aient.co` (no trailing slash; same as your real URL).
+
+That sets `CSRF_TRUSTED_ORIGINS` so Django trusts your origin. If it was wrong or missing, fix it, redeploy, and try again.
+
+**2. CSRF exempt for email-check (already applied in this repo)**
+
+The pre-built frontend does not send the CSRF token for the email-check request. This repo already applies the fix:
+
+- **Code:** In `apps/api/plane/authentication/urls.py`, the `email-check/` and `spaces/email-check/` views are wrapped with `csrf_exempt`.
+- **Compose:** The API is **built from source** (`apps/api`, `Dockerfile.api`) and tagged as `plane-backend:local`; worker, beat, and migrator use the same image. So when you deploy from this repo, the patched backend is used and login should work without 403 on email-check.
+
+If you switch back to `image: makeplane/plane-backend:stable` (no build), you would get 403 again unless you use a backend image that includes this patch.
 
 ### Using another proxy (Nginx, Caddy, etc.)
 
@@ -81,6 +178,123 @@ Route by path:
 - **`/`** (default) → proxy to **plane-web:3000**
 
 Then point your domain at that proxy.
+
+## Create first admin (when you never get to create login)
+
+If you only see the **login** screen and never see **"Let's secure your instance"** (so you can't create the first account), create the first user from the server.
+
+You can do this in either of two ways:
+
+---
+
+### From inside the API container (Dokploy “Terminal” / “Exec”)
+
+If you open a terminal in Dokploy and it drops you into a container (you see a prompt like `23c32efe898e:/#`), **you’re already inside the API container**. Docker isn’t available there; run the Django commands directly (no `docker exec`). The app lives in `/code`, so run:
+
+```bash
+cd /code
+```
+
+**1. Create the first user**
+
+```bash
+python manage.py createsuperuser
+```
+
+Enter **email**, **username** (e.g. `admin`), and **password** when prompted.
+
+**2. Make that user Instance Admin**
+
+```bash
+python manage.py create_instance_admin YOUR_EMAIL@example.com
+```
+
+Use the **exact** email from step 1.
+
+**3. Enable password login**
+
+```bash
+python manage.py shell -c "
+from plane.app.db.models import InstanceConfiguration
+InstanceConfiguration.objects.filter(key='ENABLE_EMAIL_PASSWORD').update(value='1')
+InstanceConfiguration.objects.filter(key='ENABLE_SIGNUP').update(value='1')
+print('Done.')
+"
+```
+
+If that fails (e.g. wrong model path), try:
+
+```bash
+python manage.py shell -c "
+from django.apps import apps
+m = apps.get_model('db', 'InstanceConfiguration')
+m.objects.filter(key='ENABLE_EMAIL_PASSWORD').update(value='1')
+m.objects.filter(key='ENABLE_SIGNUP').update(value='1')
+print('Done.')
+"
+```
+
+**4. Mark the instance as configured** (so login no longer returns “Instance not configured”):
+
+```bash
+python manage.py shell -c "
+from plane.license.models import Instance
+i = Instance.objects.first()
+if i:
+    i.is_setup_done = True
+    i.save()
+    print('Instance marked as setup done.')
+else:
+    print('No Instance found - create one or run migrations.')
+"
+```
+
+**5. Log in** at `https://your-domain` with that email and password, then open **/god-mode** if needed.
+
+---
+
+### From the server (SSH or host shell)
+
+If you have SSH (or a “host” shell) on the machine where Docker runs, use the container name and `docker exec`:
+
+**1. Find the API container**
+
+```bash
+docker ps --format "{{.Names}}" | grep -i api
+```
+
+Use that name as `<API_CONTAINER>` below (e.g. `barbadosorg-plane-firple-plane-api-1`).
+
+**2. Create the first user**
+
+```bash
+docker exec -it <API_CONTAINER> python manage.py createsuperuser
+```
+
+**3. Make that user Instance Admin**
+
+```bash
+docker exec -it <API_CONTAINER> python manage.py create_instance_admin YOUR_EMAIL@example.com
+```
+
+**4. Enable password login**
+
+```bash
+docker exec -it <API_CONTAINER> python manage.py shell -c "
+from plane.app.db.models import InstanceConfiguration
+InstanceConfiguration.objects.filter(key='ENABLE_EMAIL_PASSWORD').update(value='1')
+InstanceConfiguration.objects.filter(key='ENABLE_SIGNUP').update(value='1')
+print('Done.')
+"
+```
+
+(If the import fails, use the `django.apps` version from the “From inside the API container” section above, inside the same `docker exec ... shell -c "..."`.)
+
+**5. Log in in the browser**
+
+Open your instance (e.g. `https://pm.aient.co`), log in with the **email** and **password** from step 2. Then open **/god-mode** to configure auth and SMTP if needed.
+
+---
 
 ## First run: migrations
 
@@ -103,6 +317,7 @@ All persistent data is in **named volumes** (`plane-db-data`, `plane-redis-data`
 (All in **`docker-compose.dokploy.yml`** and **`proxy/nginx.conf`**.)
 
 - **plane-proxy** (Nginx): single entry point so the Domains tab can point to one service; routes `/api` and `/auth` to the API, everything else to the web app (fixes 405 when Dokploy/Traefik don’t do path-based routing).
+- **API built from source** with **CSRF exempt** for `/auth/email-check/` and `/auth/spaces/email-check/` (fixes 403 when the frontend doesn’t send the CSRF token). See `apps/api/plane/authentication/urls.py`. All backend services (api, worker, beat, migrator) use the image `plane-backend:local` built from `apps/api`.
 - **RabbitMQ** added: backend and Celery require it (worker/beat).
 - **REDIS_URL** set to `redis://plane-redis:6379/0`.
 - **Named volumes** instead of host paths so it works in Dokploy.

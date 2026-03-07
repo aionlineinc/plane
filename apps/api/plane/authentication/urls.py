@@ -3,6 +3,7 @@
 # See the LICENSE file for details.
 
 from django.urls import path
+from django.views.decorators.csrf import csrf_exempt
 
 from .views import (
     CSRFTokenEndpoint,
@@ -115,9 +116,9 @@ urlpatterns = [
         GitLabCallbackSpaceEndpoint.as_view(),
         name="space-gitlab-callback",
     ),
-    # Email Check
-    path("email-check/", EmailCheckEndpoint.as_view(), name="email-check"),
-    path("spaces/email-check/", EmailCheckSpaceEndpoint.as_view(), name="email-check"),
+    # Email Check (csrf_exempt: frontend does not send token for this request)
+    path("email-check/", csrf_exempt(EmailCheckEndpoint.as_view()), name="email-check"),
+    path("spaces/email-check/", csrf_exempt(EmailCheckSpaceEndpoint.as_view()), name="email-check"),
     # Password
     path("forgot-password/", ForgotPasswordEndpoint.as_view(), name="forgot-password"),
     path(
