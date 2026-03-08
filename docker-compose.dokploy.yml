@@ -1,16 +1,23 @@
 services:
   # Single entry point: route /api and /auth to API, everything else to web.
   # In Dokploy Domains tab, point your domain (e.g. pm.aient.co) at this service, port 80.
+  # If 502 and no API logs: set UPSTREAM_API (and UPSTREAM_WEB) to the API container's internal hostname in Dokploy.
   plane-proxy:
-    image: nginx:alpine
+    build:
+      context: ./proxy
+      dockerfile: Dockerfile
+    image: plane-proxy:local
     restart: unless-stopped
     expose:
       - "80"
-    volumes:
-      - ./proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    environment:
+      - UPSTREAM_API=${UPSTREAM_API:-plane-api}
+      - UPSTREAM_WEB=${UPSTREAM_WEB:-plane-web}
     depends_on:
-      - plane-web
-      - plane-api
+      plane-web:
+        condition: service_started
+      plane-api:
+        condition: service_healthy
     networks:
       - default
       - dokploy-network

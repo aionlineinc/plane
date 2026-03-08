@@ -146,7 +146,31 @@ Check **plane-web** logs. If it’s crashing, the frontend won’t load and the 
 Confirm the domain in the Domains tab points to **plane-proxy**, port **80**. If it points to another service or wrong port, you can get 502.
 
 **4. Containers still starting**  
-After deploy, wait 1–2 minutes for plane-api (and plane-web) to finish migrations and listen on 8000/3000. Retry the page.
+After deploy, wait 1–2 minutes for plane-api (and plane-web) to finish migrations and listen on 8000/3000. Retry the page. The compose now makes **plane-proxy** wait for **plane-api** to be **healthy** before starting, which reduces 502s while the API is still starting.
+
+**5. 502 only on POST /auth/email-check/ and no API log activity**  
+If **plane-api** logs show no request when you try to log in, the request **never reaches the API**. So either:
+
+- **Domain points at the wrong service**  
+  In Dokploy **Domains**, the host (e.g. `pm.aient.co`) must be attached to **plane-proxy**, port **80**, not to plane-web or plane-api. If it’s attached to **plane-web**, all traffic (including POST /auth/email-check/) goes to the frontend; the API gets nothing and you see 502 and no API logs.
+
+- **Proxy can’t reach the API**  
+  From the server, test from inside the proxy container (replace `<proxy-container>` with the real name, e.g. from `docker ps`):
+  ```bash
+  docker exec <proxy-container> wget -q -O - http://plane-api:8000/
+  ```
+  If this fails, plane-proxy and plane-api are not on the same network or the API isn’t listening. Ensure both use the same compose file and the same networks (default + dokploy-network).
+
+**Quick check:** In Domains, if the target is **plane-web** or shows port **3000**, change it to **plane-proxy** and port **80**, save, redeploy if needed, then try again.
+
+**6. Domain is on proxy:80 but still 502 and no API logs (cannot run docker exec)**  
+The proxy may be unable to reach the API because your platform uses a **different internal hostname** for the API (e.g. a long container name instead of `plane-api`). The proxy now supports **configurable upstream hostnames**:
+
+- In the **plane-proxy** service, set environment variables (in Dokploy **Environment** or in the compose):
+  - **`UPSTREAM_API`** = internal hostname of the API container (default: `plane-api`). If Dokploy shows something like `barbadosorg-plane-firple-plane-api-1` as the API service hostname, set `UPSTREAM_API=barbadosorg-plane-firple-plane-api-1` (or whatever your UI shows).
+  - **`UPSTREAM_WEB`** = internal hostname of the web container (default: `plane-web`). Override only if needed.
+
+- **Finding the hostname in Dokploy:** In the app’s service list or details, check the API service for “Internal hostname”, “Service name”, “Container name”, or the hostname other services use to reach it. Use that value for `UPSTREAM_API`. If everything is deployed from the same compose and Dokploy uses standard Compose networking, `plane-api` and `plane-web` should work; try the overrides only if 502 persists.
 
 ---
 
