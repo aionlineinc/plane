@@ -145,10 +145,13 @@ Check **plane-web** logs. If it’s crashing, the frontend won’t load and the 
 **3. plane-proxy is down or wrong port**  
 Confirm the domain in the Domains tab points to **plane-proxy**, port **80**. If it points to another service or wrong port, you can get 502.
 
-**4. Containers still starting**  
+**4. plane-api "unhealthy" or "dependency failed to start"**
+The API healthcheck was updated to use **Python** (no curl) and a **start_period: 90s** so the API has time to start before being marked unhealthy. If the API still fails healthchecks, check **plane-api** logs (entrypoint errors, DB connection, GUNICORN_WORKERS, etc.).
+
+**5. Containers still starting**  
 After deploy, wait 1–2 minutes for plane-api (and plane-web) to finish migrations and listen on 8000/3000. Retry the page. The compose now makes **plane-proxy** wait for **plane-api** to be **healthy** before starting, which reduces 502s while the API is still starting.
 
-**5. 502 only on POST /auth/email-check/ and no API log activity**  
+**6. 502 only on POST /auth/email-check/ and no API log activity**  
 If **plane-api** logs show no request when you try to log in, the request **never reaches the API**. So either:
 
 - **Domain points at the wrong service**  
@@ -163,7 +166,7 @@ If **plane-api** logs show no request when you try to log in, the request **neve
 
 **Quick check:** In Domains, if the target is **plane-web** or shows port **3000**, change it to **plane-proxy** and port **80**, save, redeploy if needed, then try again.
 
-**6. Domain is on proxy:80 but still 502 and no API logs (cannot run docker exec)**  
+**7. Domain is on proxy:80 but still 502 and no API logs (cannot run docker exec)**  
 The proxy may be unable to reach the API because your platform uses a **different internal hostname** for the API (e.g. a long container name instead of `plane-api`). The proxy now supports **configurable upstream hostnames**:
 
 - In the **plane-proxy** service, set environment variables (in Dokploy **Environment** or in the compose):
