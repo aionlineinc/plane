@@ -2,6 +2,24 @@
 
 This compose uses the **official Plane images** (`makeplane/plane-frontend:stable`, `makeplane/plane-backend:stable`) and is a minimal stack: web + api + worker + beat + db + redis + RabbitMQ + MinIO.
 
+---
+
+## Why this is fiddly on Dokploy (and easier options)
+
+Plane is a **multi-service** app (frontend, API, workers, DB, Redis, RabbitMQ, MinIO) that expects **one public URL** with `/api` and `/auth` going to the backend. Dokploy’s “one domain → one service” and internal networking don’t match that out of the box, so we added a custom proxy, env defaults, and healthchecks. That’s why you hit routing, 502, CSRF, and unhealthy dependency issues.
+
+**Easier options:**
+
+1. **Plane Cloud** – [app.plane.so](https://app.plane.so): hosted by Plane, no Docker or Dokploy. Easiest if you’re okay with their hosting.
+
+2. **Official Plane compose on a VPS (no Dokploy)** – On a server with Docker installed, clone [makeplane/plane](https://github.com/makeplane/plane), use their **official** `docker-compose.yml` (or the one under `deployments/`). Run `docker compose up -d`, point your domain at the **proxy** service (port 80). No Domains tab, no custom proxy—their setup is designed for that. Use Caddy or Traefik in front only if you need TLS or multiple apps.
+
+3. **Use Plane’s full stack in Dokploy** – If you deploy Plane’s **full** compose (including their **plane-proxy** image) and in Dokploy attach your domain **only** to that proxy service (port 80), you may avoid our custom nginx and path-routing. You’d still set env vars and run migrations per Plane’s docs.
+
+4. **Keep this repo** – If you’ve got it working (or nearly), the rest of this doc is for this minimal stack and troubleshooting.
+
+---
+
 ## Required environment variables
 
 Set these in Dokploy **Environment** (or in a `.env` file next to the compose):
